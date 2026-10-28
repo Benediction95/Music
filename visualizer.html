@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>오디오 비주얼라이저</title>
+  <style>
+    body {
+      margin: 0;
+      background-color: #0d0d12;
+      color: #ffffff;
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      overflow: hidden;
+    }
+    .controls {
+      position: absolute;
+      top: 20px;
+      z-index: 10;
+      background: rgba(255, 255, 255, 0.1);
+      padding: 12px 20px;
+      border-radius: 8px;
+      backdrop-filter: blur(5px);
+      display: flex;
+      gap: 15px;
+      align-items: center;
+    }
+    input[type="file"], button {
+      color: white;
+      background: #2a2a35;
+      border: 1px solid #444;
+      padding: 8px 12px;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover { background: #3a3a48; }
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="controls">
+    <input type="file" id="audioUpload" accept="audio/*" />
+    <button id="micBtn">마이크 입력 사용</button>
+    <audio id="audioPlayer" controls style="height: 35px;"></audio>
+  </div>
+
+  <canvas id="canvas"></canvas>
+
+  <script>
+    const canvas = document.getElementById('canvas');
+    const ctx = canvas.getContext('2d');
+    const audioUpload = document.getElementById('audioUpload');
+    const audioPlayer = document.getElementById('audioPlayer');
+    const micBtn = document.getElementById('micBtn');
+
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+
+    let audioCtx;
+    let analyser;
+    let source;
+    let dataArray;
+    let bufferLength;
+
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256; // 값이 클수록 막대가 세밀해짐 (64, 128, 256, 512...)
+        bufferLength = analyser.frequencyBinCount;
+        dataArray = new Uint8Array(bufferLength);
+      }
+    }
+
+    // 1. 오디오 파일 업로드 처리
+    audioUpload.addEventListener('change', function() {
+      const files = this.files;
+      if (files.length === 0) return;
+      
+      initAudio();
+      const file = URL.createObjectURL(files[0]);
+      audioPlayer.src = file;
+      audioPlayer.play();
+
+      if (!source || source.mediaElement !== audioPlayer) {
+        source = audioCtx.createMediaElementSource(audioPlayer);
+        source.connect(analyser);
+        analyser.connect(audioCtx.destination);
+      }
+      animate();
+    });
+
+    // 2. 마이크 실시간 입력 처리
+    micBtn.addEventListener('click', async function() {
+      initAudio();
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        audioPlayer.pause();
+        const micSource = audioCtx.createMediaStreamSource(stream);
+        micSource.connect(analyser);
+        animate();
+      } catch (err) {
+        alert('마이크 접근 권한이 필요합니다.');
+      }
+    });
+
+    // 3. 화면 그리기 (원형 + 바 스펙트럼)
+    function animate() {
+      requestAnimationFrame(animate);
+      analyser.getByteFrequencyData(dataArray);
+
+      // 잔상 효과를 위한 반투명 검은색 덮어쓰기
+      ctx.fillStyle = 'rgba(13, 13, 18, 0.25)';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const centerX = canvas.width / 2;
+      const centerY = canvas.height / 2;
+      
+      // 저음역대(베이스) 에너지를 계산해 중앙 원 크기 반응
+      let bassSum = 0;
+      for (let i = 0; i < 10; i++) bassSum += dataArray[i];
+      const baseRadius = 80 + (bassSum / 10) * 0.4;
+
+      for (let i = 0; i < bufferLength; i++) {
+        const barHeight = dataArray[i] * 1.2;
+        const angle = (i * 2 * Math.PI) / bufferLength;
+
+        const xStart = centerX + Math.cos(angle) * baseRadius;
+        const yStart = centerY + Math.sin(angle) * baseRadius;
+        const xEnd = centerX + Math.cos(angle) * (baseRadius + barHeight);
+        const yEnd = centerY + Math.sin(angle) * (baseRadius + barHeight);
+
+        // 주파수 대역에 따른 네온 컬러 그라데이션
+        const hue = (i / bufferLength) * 360;
+        ctx.strokeStyle = `hsl(${hue}, 85%, 60%)`;
+        ctx.lineWidth = 4;
+        ctx.lineCap = 'round';
+
+        ctx.beginPath();
+        ctx.moveTo(xStart, yStart);
+        ctx.lineTo(xEnd, yEnd);
+        ctx.stroke();
+      }
+    }
+
+    window.addEventListener('resize', () => {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    });
+  </script>
+</body>
+</html>
